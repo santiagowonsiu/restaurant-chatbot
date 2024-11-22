@@ -36,14 +36,29 @@ async function sendMessage() {
 
         const data = await response.json();
 
-        // Display bot response
+        // Extract reply details
+        const reply = data.reply; // The nested JSON
+        const extractedTerms = reply["Extracted Terms"];
+        const categorizedTerms = reply["Categorized Terms"];
+
+        // Create bot response
         const botMessageDiv = document.createElement('div');
         botMessageDiv.className = 'chat-message bot-message';
-        botMessageDiv.textContent = data.reply;
+        botMessageDiv.innerHTML = `
+            <strong>Extracted Terms:</strong> ${extractedTerms.join(", ")}<br>
+            <strong>Categorized Terms:</strong>
+            <ul>
+                ${Object.entries(categorizedTerms).map(
+                    ([category, terms]) =>
+                        `<li><strong>${category}:</strong> ${terms.join(", ") || "None"}</li>`
+                ).join("")}
+            </ul>
+        `;
+
         chatHistory.appendChild(botMessageDiv);
         chatHistory.scrollTop = chatHistory.scrollHeight;
 
-        console.log(`Chatbot replied: "${data.reply}"`);
+        console.log("Chatbot replied:", reply);
     } catch (error) {
         console.error('Error:', error);
 
