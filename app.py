@@ -31,6 +31,15 @@ client = MongoClient('mongodb://localhost:27017/')
 db = client['1024_FAN_RSyst']
 synonyms_collection = db['term_synonyms']
 allergens_collection = db['allergens']
+menu_items_collection = db['menu_items']
+ingredients_collection = db['ingredients']
+menu_items_ingredients_collection = db['menu_items_ingredients']
+flavors_collection = db['flavors_and_sauces']
+menu_items_flavors_collection = db['menu_items_flavors_and_sauces']
+cuisine_types_collection = db['cuisine_types']
+menu_items_cuisine_types_collection = db['menu_items_cuisine_types']
+preparation_techniques_collection = db['preparation_techniques']
+menu_items_preparation_collection = db['menu_items_preparation_techniques']
 
 # Define categories
 categories = {
@@ -62,19 +71,17 @@ category_mappings = {
 def extract_terms(text):
     doc = nlp(text)
     terms = []
-    seen_terms = set()  # Track terms we have already added
+    seen_terms = set()
 
-    # Extract compound noun phrases first to give them priority
     for chunk in doc.noun_chunks:
         compound_phrase = chunk.text.lower()
         terms.append(compound_phrase)
-        seen_terms.update(compound_phrase.split())  # Mark individual words in the phrase as "seen"
+        seen_terms.update(compound_phrase.split())
 
-    # Add single words only if they are not part of any extracted compound phrase
     for token in doc:
         if token.pos_ in {"NOUN", "ADJ"}:
             term = token.text.lower()
-            if term not in seen_terms:  # Only add if it's not part of a compound phrase
+            if term not in seen_terms:
                 terms.append(term)
                 seen_terms.add(term)
 
@@ -82,10 +89,7 @@ def extract_terms(text):
 
 # Classify extracted terms into categories
 def classify_terms(terms):
-    # Create a dynamic list of categories from the keys of the `categories` dictionary
     category_list = ", ".join(categories.keys())
-
-    # Structure the OpenAI prompt with categories, formatting terms as a readable list
     formatted_terms = ', '.join(f'"{term}"' for term in terms)
     prompt = (
         f"I have the following list of terms: {formatted_terms}. "
@@ -94,7 +98,6 @@ def classify_terms(terms):
         f"Please provide each term and its category in the following format: 'term - category'."
     )
 
-    # Make the API call
     response = openai.chat.completions.create(
         model="gpt-4",
         messages=[
@@ -103,7 +106,6 @@ def classify_terms(terms):
         ]
     )
 
-    # Extract the message content and split it by lines
     if response.choices and response.choices[0].message:
         classifications = response.choices[0].message.content.strip().split("\n")
         return classifications
@@ -177,6 +179,28 @@ def categorize_extracted_terms(classifications):
             else:
                 categories["Other"].append(term)
 
+# Retrieve menu items based on matched results
+def retrieve_menu_items_based_on_final_results(final_results):
+    include_menu_item_ids = None
+    exclude_menu_item_ids = set()
+
+    if "Dish type/category" in final_results:
+        category_names = final_results["Dish type/category"]
+        category_menu_items = set(doc["id"] for doc in menu_items_collection.find({"category": {"$in": category_names}}, {"id": 1}))
+        include_menu_item_ids = category_menu_items if include_menu_item_ids is None else include_menu_item_ids.intersection(category_menu_items)
+
+    # Additional filtering logic (e.g., allergens, ingredients) goes here
+
+    if include_menu_item_ids is None:
+        final_include_criteria = {"id": {"$nin": list(exclude_menu_item_ids)}}
+    else:
+        final_include_criteria = {"id": {"$in": list(include_menu_item_ids)}}
+        if exclude_menu_item_ids:
+            final_include_criteria["id"]["$nin"] = list(exclude_menu_item_ids)
+
+    matching_menu_items = list(menu_items_collection.find(final_include_criteria, {"name": 1, "category": 1, "_id": 0}))
+    return matching_menu_items
+
 ### Flask Routes
 
 @app.route('/')
@@ -196,10 +220,14 @@ def chat():
         categorize_extracted_terms(classifications)
         matched_results = process_categories(categories)
 
+        # Fetch recommended dishes
+        recommendations = retrieve_menu_items_based_on_final_results(matched_results)
+
         response = {
             "Extracted Terms": terms,
             "Categorized Terms": categories,
-            "Matched Results": matched_results
+            "Matched Results": matched_results,
+            "Recommendations": recommendations
         }
 
         return jsonify({"reply": response})
